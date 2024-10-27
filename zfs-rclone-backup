@@ -1,49 +1,48 @@
-#!/bin/bash
+#!/bin/sh
 
-volume=$3
 server=$1
 pool=$2
-frequency=$4
+frequency=$3
 
-if [ $frequency == "daily" ]; then
-    lastsnap=$(zfs list $pool/$volume -t snapshot -o name -s creation -H 2>/dev/null | xargs zfs holds -H 2>/dev/null | grep backup-rclone | awk '{printf "%s\n",$1}' | tail -n 1)
-    if [ -z $lastsnap ]; then
+if [ "$frequency" = "daily" ]; then
+    lastsnap=$(zfs list "$pool" -t snapshot -o name -s creation -H 2>/dev/null | xargs zfs holds -H 2>/dev/null | grep backup-rclone | awk '{printf "%s\n",$1}' | tail -n 1)
+    if [ -z "$lastsnap" ]; then
         echo "Could not find a recent snapshot with backup-rclone hold"
         exit 55
     fi
-elif [ $frequency == "monthly" ]; then
-    lastsnap=$(zfs list $pool/$volume -t snapshot -o name -s creation -H 2>/dev/null | xargs zfs holds -H 2>/dev/null | grep -E "backup-rclone-(monthly|yearly)" | awk '{printf "%s\n",$1}' | tail -n 1)
-    if [ -z $lastsnap ]; then
+elif [ "$frequency" = "monthly" ]; then
+    lastsnap=$(zfs list "$pool" -t snapshot -o name -s creation -H 2>/dev/null | xargs zfs holds -H 2>/dev/null | grep -E "backup-rclone-(monthly|yearly)" | awk '{printf "%s\n",$1}' | tail -n 1)
+    if [ -z "$lastsnap" ]; then
         echo "Could not find a recent snapshot with backup-rclone hold"
         exit 55
     fi
-elif [ $frequency == "yearly" ]; then
-    lastsnap=$(zfs list $pool/$volume -t snapshot -o name -s creation -H 2>/dev/null | xargs zfs holds -H 2>/dev/null | grep backup-rclone-$frequency | awk '{printf "%s\n",$1}' | tail -n 1)
+elif [ "$frequency" = "yearly" ]; then
+    lastsnap=$(zfs list "$pool" -t snapshot -o name -s creation -H 2>/dev/null | xargs zfs holds -H 2>/dev/null | grep "backup-rclone-$frequency" | awk '{printf "%s\n",$1}' | tail -n 1)
 fi
 
-newsnap=$(zfs list -t snapshot $pool/$volume -o name -s creation -H | tail -n1)
+newsnap=$(zfs list -t snapshot "$pool" -o name -s creation -H | tail -n1)
 
-zfs hold backup-rclone-$frequency $newsnap
-if [ $frequency == "yearly" ]; then
-    nice zfs send -c -w -v $newsnap 2>/root/zfssend-$volume.log | nice rclone --low-level-retries 99999 --retries-sleep 30m --config=/etc/rclone.conf --log-file=/root/rclonezfs-$volume.log rcat server-backup-crypt:zfs/$server/$newsnap-$frequency
+zfs hold backup-rclone-"$frequency" "$newsnap"
+if [ "$frequency" = "yearly" ]; then
+    nice zfs send -c -v "$newsnap" | nice rclone --low-level-retries 99999 --retries-sleep 30m --config="$RCLONE_CONFIG" rcat "server-backup-crypt:zfs/$server/$newsnap-$frequency"
 else
-    nice zfs send -c -w -v -i $lastsnap $newsnap 2>/root/zfssend-$volume.log | nice rclone --low-level-retries 99999 --retries-sleep 30m --config=/etc/rclone.conf --log-file=/root/rclonezfs-$volume.log rcat server-backup-crypt:zfs/$server/$newsnap-$frequency
+    nice zfs send -c -v -i "$lastsnap" "$newsnap" | nice rclone --low-level-retries 99999 --retries-sleep 30m --config="$RCLONE_CONFIG" rcat "server-backup-crypt:zfs/$server/$newsnap-$frequency"
 fi
 
-if [ $? == 0 ]; then
-    if [ $frequency == "yearly" ]; then
-        if [ $lastsnap ]; then
-            zfs list $pool/$volume -t snapshot -o name -s creation -H 2>/dev/null | xargs zfs holds -H 2>/dev/null | grep backup-rclone-monthly | awk '{printf "%s\n",$1}' | xargs zfs release backup-rclone-monthly
-            zfs list $pool/$volume -t snapshot -o name -s creation -H 2>/dev/null | xargs zfs holds -H 2>/dev/null | grep backup-rclone-daily | awk '{printf "%s\n",$1}' | xargs zfs release backup-rclone-daily
-            zfs list $pool/$volume -t snapshot -o name -s creation -H 2>/dev/null | xargs zfs holds -H 2>/dev/null | grep backup-rclone-yearly | sed -e '${d;}' | awk '{printf "%s\n",$1}' | xargs zfs release backup-rclone-yearly
+if [ $? = 0 ]; then
+    if [ "$frequency" = "yearly" ]; then
+        if [ "$lastsnap" ]; then
+            zfs list "$pool" -t snapshot -o name -s creation -H 2>/dev/null | xargs zfs holds -H 2>/dev/null | grep backup-rclone-monthly | awk '{printf "%s\n",$1}' | xargs zfs release backup-rclone-monthly
+            zfs list "$pool" -t snapshot -o name -s creation -H 2>/dev/null | xargs zfs holds -H 2>/dev/null | grep backup-rclone-daily | awk '{printf "%s\n",$1}' | xargs zfs release backup-rclone-daily
+            zfs list "$pool" -t snapshot -o name -s creation -H 2>/dev/null | xargs zfs holds -H 2>/dev/null | grep backup-rclone-yearly | sed -e '${d;}' | awk '{printf "%s\n",$1}' | xargs zfs release backup-rclone-yearly
         fi
-    elif [ $frequency == "monthly" ]; then
-        zfs holds -H $lastsnap | grep -v "backup-rclone-daily" | awk '{printf "%s\n",$2}' | xargs -i zfs release "{}" $lastsnap
-    elif [ $frequency == "daily" ]; then
-        zfs list $pool/$volume -t snapshot -o name -s creation -H 2>/dev/null | xargs zfs holds -H 2>/dev/null | grep backup-rclone-daily | sed -e '${d;}' | awk '{printf "%s\n",$1}' | xargs zfs release backup-rclone-daily
+    elif [ "$frequency" = "monthly" ]; then
+        zfs holds -H "$lastsnap" | grep -v "backup-rclone-daily" | awk '{printf "%s\n",$2}' | xargs -i zfs release "{}" "$lastsnap"
+    elif [ "$frequency" = "daily" ]; then
+        zfs list "$pool" -t snapshot -o name -s creation -H 2>/dev/null | xargs zfs holds -H 2>/dev/null | grep backup-rclone-daily | sed -e '${d;}' | awk '{printf "%s\n",$1}' | xargs zfs release backup-rclone-daily
     fi
 else
-    zfs release backup-rclone-$frequency $newsnap
+    zfs release "backup-rclone-$frequency" "$newsnap"
     echo "Error sending dataset"
     exit 69
 fi
